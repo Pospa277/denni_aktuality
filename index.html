@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Denní Aktuality</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📰 Denní Aktuality</h1>
+            <p class="subtitle">Vaše zprávy na jednom místě</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab active" data-tab="news">Zprávy</button>
+            <button class="tab" data-tab="settings">Nastavení zdrojů</button>
+        </nav>
+
+        <!-- News Tab -->
+        <section id="news-tab" class="tab-content active">
+            <div class="controls">
+                <button id="fetch-btn" class="btn-primary">Načíst aktuality</button>
+                <div class="filters">
+                    <button class="filter active" data-category="all">Vše</button>
+                    <button class="filter" data-category="tech">Technologie & AI</button>
+                    <button class="filter" data-category="politics">Česká politika</button>
+                    <button class="filter" data-category="finance">Finance</button>
+                </div>
+            </div>
+            <div id="loading" class="loading hidden">Načítám zprávy...</div>
+            <div id="error" class="error hidden"></div>
+            <div id="news-list" class="news-list"></div>
+        </section>
+
+        <!-- Settings Tab -->
+        <section id="settings-tab" class="tab-content">
+            <h2>Správa zdrojů</h2>
+            <p class="settings-info">Přidejte nebo odeberte RSS feedy. Změny se automaticky ukládají.</p>
+
+            <div class="add-feed">
+                <input type="text" id="feed-name" placeholder="Název zdroje (např. Lupa.cz)">
+                <input type="url" id="feed-url" placeholder="URL RSS feedu (např. https://...)">
+                <select id="feed-category">
+                    <option value="tech">Technologie & AI</option>
+                    <option value="politics">Česká politika</option>
+                    <option value="finance">Finance</option>
+                </select>
+                <button id="add-feed-btn" class="btn-primary">Přidat zdroj</button>
+            </div>
+
+            <div id="feeds-list" class="feeds-list"></div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
