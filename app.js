@@ -2,7 +2,14 @@
 // Denní Aktuality - hlavní aplikační logika
 // ============================================================
 
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
+// CORS proxy fallback chain - zkusí postupně, dokud jeden nezafunguje
+const CORS_PROXIES = [
+    url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://proxy.corsfix.com/?url=${encodeURIComponent(url)}`,
+];
+
+const FETCH_TIMEOUT_MS = 8000;
 
 const DEFAULT_FEEDS = [
     // Technologie & AI
@@ -12,12 +19,13 @@ const DEFAULT_FEEDS = [
     { name: 'Hacker News', url: 'https://hnrss.org/frontpage', category: 'tech' },
     // Česká politika
     { name: 'iDNES - Zprávy', url: 'https://servis.idnes.cz/rss.aspx?c=zpravodaj', category: 'politics' },
-    { name: 'Aktuálně.cz', url: 'https://www.aktualne.cz/rss/', category: 'politics' },
+    { name: 'Aktuálně.cz', url: 'https://zpravy.aktualne.cz/rss/', category: 'politics' },
     { name: 'ČT24', url: 'https://ct24.ceskatelevize.cz/rss/hlavni-zpravy', category: 'politics' },
+    { name: 'Novinky.cz', url: 'https://www.novinky.cz/rss', category: 'politics' },
     // Finance
-    { name: 'E15', url: 'https://www.e15.cz/rss', category: 'finance' },
-    { name: 'Reuters Business', url: 'https://www.reutersagency.com/feed/', category: 'finance' },
-    { name: 'Hospodářské noviny', url: 'https://ihned.cz/?m=rss', category: 'finance' },
+    { name: 'Hospodářské noviny', url: 'https://hn.cz/.rss', category: 'finance' },
+    { name: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html', category: 'finance' },
+    { name: 'BBC Business', url: 'https://feeds.bbci.co.uk/news/business/rss.xml', category: 'finance' },
 ];
 
 const CATEGORY_LABELS = {
@@ -30,14 +38,27 @@ const CATEGORY_LABELS = {
 let allArticles = [];
 let currentFilter = 'all';
 
+// Verze feedů - při změně DEFAULT_FEEDS zvyšte číslo
+const FEEDS_VERSION = 2;
+
 // ---- Feed Management ----
 function getFeeds() {
+    const storedVersion = localStorage.getItem('rss_feeds_version');
     const stored = localStorage.getItem('rss_feeds');
+
+    // Pokud verze nesouhlasí nebo není uložena, resetovat na výchozí
+    if (!storedVersion || parseInt(storedVersion) < FEEDS_VERSION) {
+        localStorage.setItem('rss_feeds', JSON.stringify(DEFAULT_FEEDS));
+        localStorage.setItem('rss_feeds_version', String(FEEDS_VERSION));
+        return [...DEFAULT_FEEDS];
+    }
+
     if (stored) {
         return JSON.parse(stored);
     }
     localStorage.setItem('rss_feeds', JSON.stringify(DEFAULT_FEEDS));
-    return DEFAULT_FEEDS;
+    localStorage.setItem('rss_feeds_version', String(FEEDS_VERSION));
+    return [...DEFAULT_FEEDS];
 }
 
 function saveFeeds(feeds) {
@@ -59,17 +80,35 @@ function removeFeed(index) {
 }
 
 // ---- RSS Fetching & Parsing ----
+function fetchWithTimeout(url, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 async function fetchFeed(feed) {
-    try {
-        const proxyUrl = CORS_PROXY + encodeURIComponent(feed.url);
-        const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const text = await response.text();
-        return parseFeed(text, feed);
-    } catch (err) {
-        console.warn(`Nepodařilo se načíst ${feed.name}: ${err.message}`);
-        return [];
+    for (const proxyFn of CORS_PROXIES) {
+        try {
+            const proxyUrl = proxyFn(feed.url);
+            const response = await fetchWithTimeout(proxyUrl, FETCH_TIMEOUT_MS);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            // Ověřit, že odpověď je XML (ne HTML chybová stránka)
+            if (!text.includes('<rss') && !text.includes('<feed') && !text.includes('<channel')) {
+                throw new Error('Odpověď není platný RSS/Atom feed');
+            }
+            const articles = parseFeed(text, feed);
+            if (articles.length > 0) {
+                return articles;
+            }
+            throw new Error('Žádné články v odpovědi');
+        } catch (err) {
+            console.warn(`[${feed.name}] proxy selhala: ${err.message}`);
+            continue;
+        }
     }
+    console.warn(`[${feed.name}] Všechny proxy selhaly pro ${feed.url}`);
+    return [];
 }
 
 function parseFeed(xmlText, feed) {
@@ -143,13 +182,17 @@ async function fetchAllFeeds() {
         // Omezit na posledních 100 článků
         allArticles = allArticles.slice(0, 100);
 
-        const failedCount = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value.length === 0)).length;
+        const failedFeeds = feeds.filter((f, i) => {
+            const r = results[i];
+            return r.status === 'rejected' || (r.status === 'fulfilled' && r.value.length === 0);
+        });
 
         if (allArticles.length === 0) {
             errorEl.textContent = 'Nepodařilo se načíst žádné zprávy. Zkontrolujte připojení k internetu nebo zkuste později.';
             errorEl.classList.remove('hidden');
-        } else if (failedCount > 0) {
-            errorEl.textContent = `Načteno ${allArticles.length} článků. ${failedCount} zdroj(ů) se nepodařilo načíst.`;
+        } else if (failedFeeds.length > 0) {
+            const names = failedFeeds.map(f => f.name).join(', ');
+            errorEl.textContent = `Načteno ${allArticles.length} článků. Nepodařilo se: ${names}`;
             errorEl.classList.remove('hidden');
         }
 
